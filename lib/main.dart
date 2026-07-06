@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -15,39 +18,107 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Company HR',
+      title: 'SkyErp',
       debugShowCheckedModeBanner: false,
+      themeMode: ThemeMode.system,
       theme: ThemeData(
+        brightness: Brightness.light,
         primarySwatch: Colors.blue,
+        scaffoldBackgroundColor: Colors.white,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          elevation: 1,
+        ),
       ),
-      home: const AppGate(),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        primarySwatch: Colors.blue,
+        scaffoldBackgroundColor: const Color(0xFF121212),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF1E1E1E),
+          foregroundColor: Colors.white,
+          elevation: 1,
+        ),
+      ),
+      home: const SplashScreen(),
     );
   }
 }
 
-/// ---------------------------------------------------------------------
-/// Native bridge: asks Android whether "Developer options" is enabled.
-/// Backed by MainActivity.kt (MethodChannel "device_security").
-/// ---------------------------------------------------------------------
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _goNext();
+  }
+
+  Future<void> _goNext() async {
+    await Future.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const AppGate()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Center(
+        child: Image.asset(
+          'assets/splash/logo_icon_square.png',
+          width: 250,
+        ),
+      ),
+    );
+  }
+}
+
 class DeviceSecurity {
   static const _channel = MethodChannel('device_security');
 
   static Future<bool> isDeveloperModeOn() async {
     try {
-      final bool result = await _channel.invokeMethod('isDeveloperModeOn');
-      return result;
+      return await _channel.invokeMethod('isDeveloperModeOn');
     } catch (e) {
-      // If the check itself fails, decide fail-open vs fail-closed.
-      // Fail-closed (block) is safer for your use case:
       return false;
+    }
+  }
+
+  static Future<bool> isVpnActive() async {
+    try {
+      return await _channel.invokeMethod('isVpnActive');
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<bool> isMockLocationOn() async {
+    try {
+      return await _channel.invokeMethod('isMockLocationOn');
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<String> getAndroidId() async {
+    try {
+      final id = await _channel.invokeMethod('getAndroidId');
+      return (id as String?) ?? '';
+    } catch (e) {
+      return '';
     }
   }
 }
 
-/// ---------------------------------------------------------------------
-/// Gate widget: shown first. Checks developer mode before letting the
-/// user reach the actual HR WebView screen.
-/// ---------------------------------------------------------------------
 class AppGate extends StatefulWidget {
   const AppGate({super.key});
 
@@ -56,47 +127,77 @@ class AppGate extends StatefulWidget {
 }
 
 class _AppGateState extends State<AppGate> {
-  bool? _devModeOn;
+  bool? _blocked;
+  String _reason = '';
 
   @override
   void initState() {
     super.initState();
-    _checkDevMode();
+    _runChecks();
   }
 
-  Future<void> _checkDevMode() async {
-    final result = await DeviceSecurity.isDeveloperModeOn();
+  Future<void> _runChecks() async {
+    final devMode = await DeviceSecurity.isDeveloperModeOn();
+    if (devMode) {
+      if (mounted) {
+        setState(() {
+          _blocked = true;
+          _reason = 'Developer Options is enabled on this device.';
+        });
+      }
+      return;
+    }
+
+    final vpnOn = await DeviceSecurity.isVpnActive();
+    if (vpnOn) {
+      if (mounted) {
+        setState(() {
+          _blocked = true;
+          _reason = 'A VPN connection is active on this device.';
+        });
+      }
+      return;
+    }
+
+    final mockLocation = await DeviceSecurity.isMockLocationOn();
+    if (mockLocation) {
+      if (mounted) {
+        setState(() {
+          _blocked = true;
+          _reason = 'Fake/Mock GPS location was detected on this device.';
+        });
+      }
+      return;
+    }
+
     if (mounted) {
-      setState(() => _devModeOn = result);
+      setState(() => _blocked = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Still checking
-    if (_devModeOn == null) {
+    if (_blocked == null) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       );
     }
 
-    // Developer options ON -> block the app
-    if (_devModeOn == true) {
+    if (_blocked == true) {
       return Scaffold(
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24.0),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: const [
-                Icon(Icons.block, size: 64, color: Colors.red),
-                SizedBox(height: 16),
+              children: [
+                const Icon(Icons.block, size: 64, color: Colors.red),
+                const SizedBox(height: 16),
                 Text(
-                  'This app cannot run while Developer Options is enabled.\n\n'
-                  'Please disable Developer Options in your phone settings '
-                  'and reopen the app.',
+                  'This app cannot run right now.\n\n$_reason\n\n'
+                  'Please disable it and reopen the app.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 16),
+                  style: const TextStyle(fontSize: 16),
                 ),
               ],
             ),
@@ -105,14 +206,10 @@ class _AppGateState extends State<AppGate> {
       );
     }
 
-    // Developer options OFF -> proceed to the real app
     return const HrWebViewScreen();
   }
 }
 
-/// ---------------------------------------------------------------------
-/// The actual HR WebView screen (unchanged logic, controller-init fixed).
-/// ---------------------------------------------------------------------
 class HrWebViewScreen extends StatefulWidget {
   const HrWebViewScreen({super.key});
 
@@ -121,30 +218,87 @@ class HrWebViewScreen extends StatefulWidget {
 }
 
 class _HrWebViewScreenState extends State<HrWebViewScreen> {
-  // Replace this with your actual ERPNext URL
-  final String _hrPortalUrl = 'https://demo.itfarmer.in/';
+  static const String _baseUrl =
+      'https://demo.itfarmer.in/';
 
-  WebViewController? _controller; // nullable now: never touched before ready
+  WebViewController? _controller;
   bool _isLoading = true;
+  String _deviceId = '';
+
+  // --- ERPNext theme sync state ---
+  Color _headerBg = Colors.white;
+  Color _headerFg = Colors.black;
+  Timer? _themePollTimer;
+
+  // JS injected into the page to read ERPNext's active theme.
+  // Tries the CSS custom properties Frappe sets on <body>/<html> first
+  // (these track "Frappe Light" / "Timeless Night" / "Automatic" / any
+  // custom theme automatically), then falls back to the localStorage key.
+  static const String _themeProbeJs = r"""
+(() => {
+  try {
+    const rootStyle = getComputedStyle(document.documentElement);
+    const bodyStyle = getComputedStyle(document.body);
+
+    const pick = (name) => {
+      let v = rootStyle.getPropertyValue(name).trim();
+      if (!v) v = bodyStyle.getPropertyValue(name).trim();
+      return v;
+    };
+
+    // Frappe/ERPNext desk CSS variables (fall back through a few known names
+    // since these vary slightly by version).
+    const bg = pick('--navbar-bg') || pick('--fg-color') || pick('--bg-color') || pick('--card-bg');
+    const fg = pick('--text-color') || pick('--gray-900') || pick('--text-on-gray');
+
+    const storedTheme = localStorage.getItem('preferred_theme')
+      || localStorage.getItem('theme')
+      || '';
+
+    return JSON.stringify({ bg: bg, fg: fg, storedTheme: storedTheme });
+  } catch (e) {
+    return JSON.stringify({ bg: '', fg: '', storedTheme: '', error: String(e) });
+  }
+})();
+""";
 
   @override
   void initState() {
     super.initState();
-    _initPermissionsThenWebView();
+    _initDeviceIdThenPermissionsThenWebView();
   }
 
-  // Step 1: ask Android (OS-level / Layer 1) for permissions up front,
-  // then build the WebView once that's done.
+  @override
+  void dispose() {
+    _themePollTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initDeviceIdThenPermissionsThenWebView() async {
+    _deviceId = await DeviceSecurity.getAndroidId();
+    await _initPermissionsThenWebView();
+  }
+
   Future<void> _initPermissionsThenWebView() async {
     await [
       Permission.camera,
       Permission.microphone,
       Permission.location,
-      Permission.photos, // Android 13+ media access
-      Permission.storage, // Android 12 and below fallback
+      Permission.photos,
+      Permission.storage,
     ].request();
 
     _setupWebView();
+  }
+
+  String get _hrPortalUrl {
+    if (_deviceId.isEmpty) return _baseUrl;
+    final uri = Uri.parse(_baseUrl);
+    final newUri = uri.replace(queryParameters: {
+      ...uri.queryParameters,
+      'deviceid': _deviceId,
+    });
+    return newUri.toString();
   }
 
   void _setupWebView() {
@@ -157,10 +311,30 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
               _isLoading = true;
             });
           },
-          onPageFinished: (url) {
+          onPageFinished: (url) async {
             setState(() {
               _isLoading = false;
             });
+
+            if (_deviceId.isNotEmpty) {
+              try {
+                await _controller?.runJavaScript(
+                  "localStorage.setItem('erpnext_device_id', '$_deviceId');",
+                );
+              } catch (_) {
+                // Non-fatal — page may not have finished attaching JS bridge yet
+              }
+            }
+
+            // Do an immediate theme read, then start polling so we also
+            // catch in-page theme switches (ERPNext's theme toggle doesn't
+            // reload the page — it just flips CSS variables/attributes).
+            await _syncErpTheme();
+            _themePollTimer?.cancel();
+            _themePollTimer = Timer.periodic(
+              const Duration(seconds: 2),
+              (_) => _syncErpTheme(),
+            );
           },
         ),
       )
@@ -169,19 +343,84 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
     _controller = controller;
     _wireAndroidPermissionBridge(controller);
 
-    // Force a rebuild now that _controller is ready, since initState itself
-    // can't call setState directly.
     if (mounted) setState(() {});
   }
 
-  // Step 2: wire the WebView's own permission bridge (Layer 2) — this is
-  // what actually lets camera/mic/location/file-upload work for content
-  // loaded INSIDE the WebView (e.g. a "scan receipt" or "GPS check-in"
-  // feature on your ERPNext HR portal pages).
+  Future<void> _syncErpTheme() async {
+    final controller = _controller;
+    if (controller == null) return;
+
+    try {
+      final raw = await controller.runJavaScriptReturningResult(_themeProbeJs);
+      // runJavaScriptReturningResult on Android returns a JSON-encoded
+      // string (i.e. the whole thing is double-quoted and escaped), so
+      // decode it once to get the actual JSON string, then parse that.
+      String jsonStr = raw.toString();
+      try {
+        jsonStr = jsonDecode(jsonStr) as String;
+      } catch (_) {
+        // Some platforms return the raw string already unescaped — ignore.
+      }
+
+      final Map<String, dynamic> data = jsonDecode(jsonStr);
+      final String bgRaw = (data['bg'] ?? '').toString();
+      final String fgRaw = (data['fg'] ?? '').toString();
+      final String storedTheme = (data['storedTheme'] ?? '').toString();
+
+      Color? bg = _parseCssColor(bgRaw);
+      Color? fg = _parseCssColor(fgRaw);
+
+      // Fallback: if CSS variables weren't readable, use the stored theme
+      // name to guess light vs dark.
+      if (bg == null || fg == null) {
+        final isDark = storedTheme.toLowerCase().contains('night') ||
+            storedTheme.toLowerCase().contains('dark');
+        bg ??= isDark ? const Color(0xFF1E1E1E) : Colors.white;
+        fg ??= isDark ? Colors.white : Colors.black;
+      }
+
+      if (!mounted) return;
+      if (bg != _headerBg || fg != _headerFg) {
+        setState(() {
+          _headerBg = bg!;
+          _headerFg = fg!;
+        });
+      }
+    } catch (_) {
+      // Non-fatal — keep whatever header color we currently have.
+    }
+  }
+
+  // Parses common CSS color formats: rgb(), rgba(), and #hex.
+  Color? _parseCssColor(String value) {
+    final v = value.trim();
+    if (v.isEmpty) return null;
+
+    final rgbMatch =
+        RegExp(r'rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)').firstMatch(v);
+    if (rgbMatch != null) {
+      final r = double.tryParse(rgbMatch.group(1) ?? '')?.round() ?? 0;
+      final g = double.tryParse(rgbMatch.group(2) ?? '')?.round() ?? 0;
+      final b = double.tryParse(rgbMatch.group(3) ?? '')?.round() ?? 0;
+      return Color.fromARGB(255, r.clamp(0, 255), g.clamp(0, 255), b.clamp(0, 255));
+    }
+
+    if (v.startsWith('#')) {
+      var hex = v.substring(1);
+      if (hex.length == 3) {
+        hex = hex.split('').map((c) => '$c$c').join();
+      }
+      if (hex.length == 6) hex = 'FF$hex';
+      final parsed = int.tryParse(hex, radix: 16);
+      if (parsed != null) return Color(parsed);
+    }
+
+    return null;
+  }
+
   void _wireAndroidPermissionBridge(WebViewController controller) {
     final androidController = controller.platform as AndroidWebViewController;
 
-    // Camera / Microphone requests coming from JavaScript inside the page
     androidController.setOnPlatformPermissionRequest((request) async {
       final cameraStatus = await Permission.camera.status;
       final micStatus = await Permission.microphone.status;
@@ -193,7 +432,6 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
       }
     });
 
-    // Location requests (e.g. GPS check-in triggered from the HR portal page)
     androidController.setGeolocationPermissionsPromptCallbacks(
       onShowPrompt: (request) async {
         final locationStatus = await Permission.location.status;
@@ -204,7 +442,6 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
       },
     );
 
-    // File upload fields (e.g. expense receipt upload, profile photo)
     androidController.setOnShowFileSelector((params) async {
       final result = await FilePicker.platform.pickFiles(
         allowMultiple: params.mode == FileSelectorMode.openMultiple,
@@ -238,11 +475,12 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Company HR'),
+          backgroundColor: _headerBg,
+          foregroundColor: _headerFg,
+          title: const Text('SkyErp'),
         ),
         body: Stack(
           children: [
-            // Only build the WebView once the controller actually exists.
             if (controller != null) WebViewWidget(controller: controller),
             if (_isLoading || controller == null)
               const Center(
