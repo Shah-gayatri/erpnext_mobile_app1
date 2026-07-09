@@ -43,16 +43,18 @@ flutter_launcher_icons:
   ios: true
   image_path: "assets/icon/app_icon.png"
 
+
 # ---------------------------
-# SPLASH SCREEN CONFIG
+# SPLASH SCREEN CONFIG (blank white — no icon flash)
 # ---------------------------
 flutter_native_splash:
   color: "#FFFFFF"
-  image: assets/splash/logo_icon_square.png
+  image: assets/splash/transparent.png
 
   android: true
   ios: true
 
   android_12:
-    image: assets/splash/logo_icon_square.png
+    image: assets/splash/transparent.png
     color: "#FFFFFF"
+    icon_background_color: "#FFFFFF"

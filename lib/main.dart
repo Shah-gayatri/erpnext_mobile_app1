@@ -18,7 +18,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'SkyErp',
+      title: "It's your ERP",
       debugShowCheckedModeBanner: false,
       themeMode: ThemeMode.system,
       theme: ThemeData(
@@ -221,19 +221,31 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
   static const String _baseUrl =
       'https://demo.itfarmer.in/';
 
+  // The URL that counts as the "home screen" for the purpose of showing
+  // the AppBar title. Adjust this if your home page path is different.
+  static const String _homeUrl = 'https://demo.itfarmer.in/desk';
+
+  // How often to re-check the current URL. ERPNext is a single-page app,
+  // so navigating between its internal screens does NOT fire
+  // onPageStarted/onPageFinished — polling is required to catch route
+  // changes (e.g. leaving the home screen, or coming back to it).
+  static const Duration _urlPollInterval = Duration(milliseconds: 800);
+
   WebViewController? _controller;
   bool _isLoading = true;
   String _deviceId = '';
 
+  // Whether the AppBar title should currently be shown. Only true when
+  // the loaded page is the home/desk screen.
+  bool _showAppBarTitle = true;
+
   // --- ERPNext theme sync state ---
+  // Drives the AppBar's colors below, kept in sync with ERPNext's own
+  // theme (Frappe Light / Timeless Night / Automatic).
   Color _headerBg = Colors.white;
   Color _headerFg = Colors.black;
-  Timer? _themePollTimer;
+  Timer? _pollTimer;
 
-  // JS injected into the page to read ERPNext's active theme.
-  // Tries the CSS custom properties Frappe sets on <body>/<html> first
-  // (these track "Frappe Light" / "Timeless Night" / "Automatic" / any
-  // custom theme automatically), then falls back to the localStorage key.
   static const String _themeProbeJs = r"""
 (() => {
   try {
@@ -246,8 +258,6 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
       return v;
     };
 
-    // Frappe/ERPNext desk CSS variables (fall back through a few known names
-    // since these vary slightly by version).
     const bg = pick('--navbar-bg') || pick('--fg-color') || pick('--bg-color') || pick('--card-bg');
     const fg = pick('--text-color') || pick('--gray-900') || pick('--text-on-gray');
 
@@ -270,7 +280,7 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
 
   @override
   void dispose() {
-    _themePollTimer?.cancel();
+    _pollTimer?.cancel();
     super.dispose();
   }
 
@@ -301,6 +311,28 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
     return newUri.toString();
   }
 
+  // Normalizes a URL for comparison: strips query string and any
+  // trailing slash, so "https://demo.itfarmer.in/desk?foo=bar" and
+  // "https://demo.itfarmer.in/desk/" both match "/desk".
+  String _normalizeUrl(String? url) {
+    if (url == null || url.isEmpty) return '';
+    final withoutQuery = url.split('?').first;
+    if (withoutQuery.length > 1 && withoutQuery.endsWith('/')) {
+      return withoutQuery.substring(0, withoutQuery.length - 1);
+    }
+    return withoutQuery;
+  }
+
+  // Returns true if [url] should be treated as the home/desk screen,
+  // i.e. the base URL itself or the configured "_homeUrl".
+  bool _isHomeUrl(String? url) {
+    final normalized = _normalizeUrl(url);
+    if (normalized.isEmpty) return false;
+    final normalizedBase = _normalizeUrl(_baseUrl);
+    final normalizedHome = _normalizeUrl(_homeUrl);
+    return normalized == normalizedBase || normalized == normalizedHome;
+  }
+
   void _setupWebView() {
     final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -326,14 +358,39 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
               }
             }
 
-            // Do an immediate theme read, then start polling so we also
-            // catch in-page theme switches (ERPNext's theme toggle doesn't
-            // reload the page — it just flips CSS variables/attributes).
+            //header text display condition
+            final currentUrl = await _controller?.currentUrl();
+
+            await _controller?.runJavaScript('''
+            (function() {
+                const heading = document.querySelector("h1");
+          
+                if (!heading) return;
+          
+                if ("$currentUrl" === "$_homeUrl") {
+                    heading.style.display = "";
+                } else {
+                    heading.style.display = "none";
+                }
+            })();
+            ''');
+
+            // Initial sync right after load.
             await _syncErpTheme();
-            _themePollTimer?.cancel();
-            _themePollTimer = Timer.periodic(
-              const Duration(seconds: 2),
-              (_) => _syncErpTheme(),
+            await _syncAppBarTitle();
+
+            // ERPNext is a single-page app: switching between Organization,
+            // Accounting, Stock, back to Home, etc. happens via client-side
+            // JS routing and never fires onPageStarted/onPageFinished again.
+            // So we poll the current URL/theme periodically instead of
+            // relying solely on navigation callbacks.
+            _pollTimer?.cancel();
+            _pollTimer = Timer.periodic(
+              _urlPollInterval,
+              (_) {
+                _syncErpTheme();
+                _syncAppBarTitle();
+              },
             );
           },
         ),
@@ -346,15 +403,47 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
     if (mounted) setState(() {});
   }
 
+  // Checks the WebView's current URL and shows/hides the AppBar title
+  // accordingly. Called once after each page load, and then repeatedly
+  // by the poll timer to catch in-app (SPA) navigation.
+  Future<void> _syncAppBarTitle() async {
+    final controller = _controller;
+    if (controller == null) return;
+
+    try {
+      final currentUrl = await controller.currentUrl();
+      final isHome = _isHomeUrl(currentUrl);
+      if (!mounted) return;
+      if (isHome != _showAppBarTitle) {
+        setState(() {
+          _showAppBarTitle = isHome;
+        });
+      }
+
+      // Keep the in-page <h1> heading in sync too, in case the SPA route
+      // changed without a full page load.
+      await controller.runJavaScript('''
+      (function() {
+          const heading = document.querySelector("h1");
+          if (!heading) return;
+          if ($isHome) {
+              heading.style.display = "";
+          } else {
+              heading.style.display = "none";
+          }
+      })();
+      ''');
+    } catch (_) {
+      // Non-fatal — keep whatever title state we currently have.
+    }
+  }
+
   Future<void> _syncErpTheme() async {
     final controller = _controller;
     if (controller == null) return;
 
     try {
       final raw = await controller.runJavaScriptReturningResult(_themeProbeJs);
-      // runJavaScriptReturningResult on Android returns a JSON-encoded
-      // string (i.e. the whole thing is double-quoted and escaped), so
-      // decode it once to get the actual JSON string, then parse that.
       String jsonStr = raw.toString();
       try {
         jsonStr = jsonDecode(jsonStr) as String;
@@ -370,8 +459,6 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
       Color? bg = _parseCssColor(bgRaw);
       Color? fg = _parseCssColor(fgRaw);
 
-      // Fallback: if CSS variables weren't readable, use the stored theme
-      // name to guess light vs dark.
       if (bg == null || fg == null) {
         final isDark = storedTheme.toLowerCase().contains('night') ||
             storedTheme.toLowerCase().contains('dark');
@@ -391,7 +478,6 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
     }
   }
 
-  // Parses common CSS color formats: rgb(), rgba(), and #hex.
   Color? _parseCssColor(String value) {
     final v = value.trim();
     if (v.isEmpty) return null;
@@ -477,7 +563,8 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
         appBar: AppBar(
           backgroundColor: _headerBg,
           foregroundColor: _headerFg,
-          title: const Text('SkyErp'),
+          title: Text(_showAppBarTitle ? "It's your ERP" : ''),
+          elevation: 1,
         ),
         body: Stack(
           children: [
