@@ -219,11 +219,11 @@ class HrWebViewScreen extends StatefulWidget {
 
 class _HrWebViewScreenState extends State<HrWebViewScreen> {
   static const String _baseUrl =
-      'https://demo.itfarmer.in/';
+      'https://gulferp.itfarmer.in/';
 
   // The URL that counts as the "home screen" for the purpose of showing
   // the AppBar title. Adjust this if your home page path is different.
-  static const String _homeUrl = 'https://demo.itfarmer.in/desk';
+  static const String _homeUrl = 'https://gulferp.itfarmer.in/desk';
 
   // How often to re-check the current URL. ERPNext is a single-page app,
   // so navigating between its internal screens does NOT fire
@@ -312,8 +312,8 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
   }
 
   // Normalizes a URL for comparison: strips query string and any
-  // trailing slash, so "https://demo.itfarmer.in/desk?foo=bar" and
-  // "https://demo.itfarmer.in/desk/" both match "/desk".
+  // trailing slash, so "https://gulferp.itfarmer.in/desk?foo=bar" and
+  // "https://gulferp.itfarmer.in/desk" both match "/desk".
   String _normalizeUrl(String? url) {
     if (url == null || url.isEmpty) return '';
     final withoutQuery = url.split('?').first;
