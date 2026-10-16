@@ -18,7 +18,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: "It's your ERP",
+      title: "From Excellence to Perfection",
       debugShowCheckedModeBanner: false,
       themeMode: ThemeMode.system,
       theme: ThemeData(
@@ -137,16 +137,17 @@ class _AppGateState extends State<AppGate> {
   }
 
   Future<void> _runChecks() async {
-    final devMode = await DeviceSecurity.isDeveloperModeOn();
-    if (devMode) {
-      if (mounted) {
-        setState(() {
-          _blocked = true;
-          _reason = 'Developer Options is enabled on this device.';
-        });
-      }
-      return;
-    }
+    // Developer options check intentionally disabled to allow administrator login
+    // final devMode = await DeviceSecurity.isDeveloperModeOn();
+    // if (devMode) {
+    //   if (mounted) {
+    //     setState(() {
+    //       _blocked = true;
+    //       _reason = 'Developer Options is enabled on this device.';
+    //     });
+    //   }
+    //   return;
+    // }
 
     final vpnOn = await DeviceSecurity.isVpnActive();
     if (vpnOn) {
@@ -563,7 +564,7 @@ class _HrWebViewScreenState extends State<HrWebViewScreen> {
         appBar: AppBar(
           backgroundColor: _headerBg,
           foregroundColor: _headerFg,
-          title: Text(_showAppBarTitle ? "It's your ERP" : ''),
+          title: const Text("From Excellence to Perfection"),
           elevation: 1,
         ),
         body: Stack(
